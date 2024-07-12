@@ -13,12 +13,16 @@ class PhonemeBpeTokenizer:
     self.tokenizer = Tokenizer.from_file(tokenizer_path)
 
   def tokenize(self, text):
+    print("text: ", text)
     # 1. convert text to phoneme
     phonemes, langs = _clean_text(text, ['cje_cleaners'])
+    print("phonemes: ", phonemes)
     # 2. replace blank space " " with "_"
     phonemes = phonemes.replace(" ", "_")
+    print("phonemes replaced: ", phonemes)
     # 3. tokenize phonemes
     phoneme_tokens = self.tokenizer.encode(phonemes).ids
+    print("phoneme_tokens: ", phoneme_tokens)
     assert(len(phoneme_tokens) == len(langs))
     if not len(phoneme_tokens):
       raise ValueError("Empty text is given")

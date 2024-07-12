@@ -201,6 +201,9 @@ def make_npz_prompt(name, uploaded_audio, recorded_audio, transcript_content):
 
 
 def make_prompt(name, wav, sr, save=True):
+    '''
+        从音频中提取文本，保存到文件中（可选）
+    '''
     global whisper_model
     whisper_model.to(device)
     if not isinstance(wav, torch.FloatTensor):
@@ -225,6 +228,7 @@ def make_prompt(name, wav, sr, save=True):
     whisper_model.cpu()
     torch.cuda.empty_cache()
     return text, lang
+    # text like: [ZH]你好，我是派蒙！[ZH],  lang like: zh   
 
 @torch.no_grad()
 def infer_from_audio(text, language, accent, audio_prompt, record_audio_prompt, transcript_content):
@@ -260,6 +264,7 @@ def infer_from_audio(text, language, accent, audio_prompt, record_audio_prompt, 
 
     # tokenize audio
     encoded_frames = tokenize_audio(audio_tokenizer, (wav_pr, sr))
+    print(encoded_frames[0][0].shape)
     audio_prompts = encoded_frames[0][0].transpose(2, 1).to(device)
 
     # tokenize text
@@ -282,6 +287,7 @@ def infer_from_audio(text, language, accent, audio_prompt, record_audio_prompt, 
     text_tokens = torch.cat([text_prompts, text_tokens], dim=-1)
     text_tokens_lens += enroll_x_lens
     lang = lang if accent == "no-accent" else token2lang[langdropdown2token[accent]]
+    logging.info("Arrive at inference stage (line 285)")
     encoded_frames = model.inference(
         text_tokens.to(device),
         text_tokens_lens.to(device),

@@ -501,6 +501,7 @@ class VALLE(VALLF):
             text_language_id = torch.LongTensor(np.array([self.language_ID[text_language]])).to(x.device)
         elif isinstance(text_language, List):
             text_language_id = torch.LongTensor(np.array([self.language_ID[tl] for tl in text_language])).to(x.device)
+        # 我超？直接把language当作embedding加上去？！
         x[:, :enroll_x_lens, :] += self.ar_language_embedding(prompt_language_id)
         x[:, enroll_x_lens:, :] += self.ar_language_embedding(text_language_id)
         x = self.ar_text_prenet(x)

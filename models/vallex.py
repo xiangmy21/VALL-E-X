@@ -454,6 +454,9 @@ class VALLE(VALLF):
         train_stage: int = 0,
         **kwargs,
     ):
+        # 参考：https://github.com/lifeiteng/vall-e/blob/main/valle/models/valle.py
+        # 就是加个mask批量生成，然后把logits和target做一个CrossEntropyLoss (AR)
+        # NAR的过程似乎有点诡异，是随机选一个stage，将这个stage前的embedding都加上（还选了一个本阶段的prefix），然后生成code (这时候不用mask), 然后和target做一个CrossEntropyLoss
         raise NotImplementedError
     def inference(
         self,

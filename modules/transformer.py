@@ -280,7 +280,7 @@ class TransformerEncoderLayer(nn.Module):
         """
         x, stage_embedding = src, None
         is_src_tuple = False
-        if isinstance(src, tuple):
+        if isinstance(src, tuple): # 这里检查了src是不是tuple
             x, stage_embedding = src
             is_src_tuple = True
 

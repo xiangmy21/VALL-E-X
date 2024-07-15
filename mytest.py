@@ -264,8 +264,7 @@ def infer_from_audio(text, language, accent, audio_prompt, record_audio_prompt, 
 
     # tokenize audio
     encoded_frames = tokenize_audio(audio_tokenizer, (wav_pr, sr))
-    print(encoded_frames[0][0].shape)
-    audio_prompts = encoded_frames[0][0].transpose(2, 1).to(device)
+    audio_prompts = encoded_frames[0][0].transpose(2, 1).to(device) # (1, T, K)
 
     # tokenize text
     logging.info(f"synthesize text: {text}")
@@ -304,7 +303,7 @@ def infer_from_audio(text, language, accent, audio_prompt, record_audio_prompt, 
     )
     # Decode with Vocos
     frames = encoded_frames.permute(2,0,1)
-    features = vocos.codes_to_features(frames)
+    features = vocos.codes_to_features(frames) # 反量化 (1, T, 128)
     samples = vocos.decode(features, bandwidth_id=torch.tensor([2], device=device))
 
     # offload model

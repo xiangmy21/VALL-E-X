@@ -430,7 +430,7 @@ class VALLE(VALLF):
             norm_first=norm_first,
             add_prenet=add_prenet,
             decoder_cls=TransformerEncoder,
-            decoder_layer_cls=TransformerEncoderLayer,
+            decoder_layer_cls=TransformerEncoderLayer, # 啊？？？哦，是自定义的，输入检查了src是不是tuple
             prefix_mode=prefix_mode,
             share_embedding=share_embedding,
             nar_scale_factor=nar_scale_factor,
@@ -508,12 +508,12 @@ class VALLE(VALLF):
         x = self.ar_text_position(x)
 
         text_len = x_lens.max()
-        prompts = y
+        prompts = y # (1, T, 8)
         prefix_len = y.shape[1]
 
         # AR Decoder
         # TODO: Managing decoder steps avoid repetitive computation
-        y = prompts[..., 0]
+        y = prompts[..., 0] # y取第一层code
         if self.ar_audio_prepend_bos:
             y = F.pad(y, (1, 0), value=NUM_AUDIO_TOKENS + 1)
 
@@ -524,27 +524,47 @@ class VALLE(VALLF):
         use_kv_caching = True
 
         sum_logprobs = torch.zeros(best_of, device=y.device)  # implement batch decoding here
-        x = x.repeat(best_of, 1, 1)
-        y = y.repeat(best_of, 1)
+        x = x.repeat(best_of, 1, 1) # (best_of, N_pr + N_audio, D)
+        y = y.repeat(best_of, 1) # (best_of, T)
+
+        # 循环进行AR预测下一个音频code（AR完成code第一层），直到预测到EOS停止
         while True:
-            y_emb = self.ar_audio_embedding(y)
+            y_emb = self.ar_audio_embedding(y) # (best_of, T, D)
             y_emb = self.ar_audio_prenet(y_emb)
             y_pos = self.ar_audio_position(y_emb)
-            xy_pos = torch.concat([x, y_pos], dim=1)
+            xy_pos = torch.concat([x, y_pos], dim=1) # x,y都是三维，(B, T, D)
 
             y_len = y.shape[1]
             x_attn_mask_pad = F.pad(
                 x_attn_mask,
                 (0, y_len),
                 value=True,
-            )
+            ) # (N, N+T), ['False' block, 'True' block]
+            '''
+            tensor([[False, False, False,  ...,  True,  True,  True],
+                    [False, False, False,  ...,  True,  True,  True],
+                    [False, False, False,  ...,  True,  True,  True],
+                    ...,
+                    [False, False, False,  ...,  True,  True,  True],
+                    [False, False, False,  ...,  True,  True,  True],
+                    [False, False, False,  ...,  True,  True,  True]])
+            '''
             y_attn_mask = F.pad(
                 torch.triu(
                     torch.ones(y_len, y_len, dtype=torch.bool), diagonal=1
                 ),
                 (x_len, 0),
                 value=False,
-            )
+            ) # (T, T+N), ['False' block, Triu 'True' block]
+            '''
+            tensor([[False, False, False,  ...,  True,  True,  True],
+                    [False, False, False,  ...,  True,  True,  True],
+                    [False, False, False,  ...,  True,  True,  True],
+                    ...,
+                    [False, False, False,  ..., False,  True,  True],
+                    [False, False, False,  ..., False, False,  True],
+                    [False, False, False,  ..., False, False, False]])
+            '''
             xy_attn_mask = torch.concat(
                 [x_attn_mask_pad, y_attn_mask], dim=0
             ).to(y.device)
@@ -560,7 +580,7 @@ class VALLE(VALLF):
                 mask=xy_attn_mask,
                 past_kv=kv_cache,
                 use_cache=use_kv_caching,
-            )
+            ) # xy_dec.shape: (best_of, N+T, D)
             # xy_dec, _ = self.ar_decoder(
             #     (xy_pos, None),
             #     mask=xy_attn_mask,
@@ -572,7 +592,7 @@ class VALLE(VALLF):
             )
             sum_logprobs += current_logprobs * (y[:, -1] != NUM_AUDIO_TOKENS)
             samples[y[:, -1] == NUM_AUDIO_TOKENS] = NUM_AUDIO_TOKENS
-            completed = (samples[:, -1] == NUM_AUDIO_TOKENS).all()
+            completed = (samples[:, -1] == NUM_AUDIO_TOKENS).all() # 等于NUM_AUDIO_TOKENS的话就是EOS停止符，同时进行best_of个预测，如果全部都是EOS停止符，就停止
             if (
                 completed
                 or (y.shape[1] - prompts.shape[1]) > x_lens.max() * 16
@@ -602,7 +622,7 @@ class VALLE(VALLF):
         if self.num_quantizers == 1:
             return torch.stack(codes, dim=-1)
 
-        # Non-AR Decoders
+        # Non-AR Decoders, 推测剩下的num_quantizers-1层code
         y_emb = self.nar_audio_embeddings[0](
             y[:, int(self.ar_audio_prepend_bos) :]
         )
@@ -627,6 +647,7 @@ class VALLE(VALLF):
             text_language_id = torch.LongTensor(np.array([self.language_ID[text_language]])).to(x.device)
         elif isinstance(text_language, List):
             text_language_id = torch.LongTensor(np.array([self.language_ID[tl] for tl in text_language])).to(x.device)
+        # 把language embedding加到文本的embedding上
         x[:, :enroll_x_lens, :] += self.nar_language_embedding(prompt_language_id)
         x[:, enroll_x_lens:, :] += self.nar_language_embedding(text_language_id)
         x = self.nar_text_prenet(x)
@@ -660,7 +681,7 @@ class VALLE(VALLF):
             for j in range(1, self.num_quantizers):
                 y_emb[:, :prefix_len] += self.nar_audio_embeddings[j](
                     prompts[..., j]
-                )
+                ) # 把参考音频prompts的第j层code的影响加到y_emb上，现在y_emb完整考虑了参考音频(以及生成的第一层code），压缩到一个(T+new_T)*D的矩阵
 
             for i, (predict_layer, embedding_layer) in enumerate(
                 zip(
@@ -670,12 +691,12 @@ class VALLE(VALLF):
             ):
                 y_pos = self.nar_audio_prenet(y_emb)
                 y_pos = self.nar_audio_position(y_pos)
-                xy_pos = torch.concat([x, y_pos], dim=1)
-
+                xy_pos = torch.concat([x, y_pos], dim=1) # (B, N(text)+T+new_T, D)
+                import pdb; pdb.set_trace()
                 xy_dec, _ = self.nar_decoder(
-                    (xy_pos, self.nar_stage_embeddings[i].weight)
+                    (xy_pos, self.nar_stage_embeddings[i].weight) # stage_embeddings是归一化参数
                 )
-                logits = predict_layer(xy_dec[:, text_len + prefix_len :])
+                logits = predict_layer(xy_dec[:, text_len + prefix_len :]) # (best_of, new_T, NUM_AUDIO_TOKENS), 每一帧取各个audio_token的分数, predict: D->NUM_AUDIO_TOKENS
 
                 samples = torch.argmax(logits, dim=-1)
                 codes.append(samples)
@@ -793,6 +814,11 @@ def top_k_top_p_filtering(
     logits, top_k=0, top_p=1.0, filter_value=-float("Inf"), min_tokens_to_keep=1
 ):
     """Filter a distribution of logits using top-k and/or nucleus (top-p) filtering
+        Top-k过滤：如果top_k大于0，函数将仅保留概率最高的top_k个tokens。这是通过将所有其他tokens的logits设置为一个非常小的值（filter_value）来实现的，这样在后续的softmax应用中，这些tokens的概率将接近于零。
+        
+        Nucleus（Top-p）过滤：如果top_p小于1.0，函数将保留累积概率大于等于top_p的最小集合的tokens。这意味着，从最高概率的token开始累加，直到总概率达到top_p阈值。这种方法允许动态调整保留的tokens数量，根据分布的形状而变化，而不是固定数量的tokens。
+        
+        保证最小tokens数量：无论过滤条件如何，函数都确保每个batch样本至少保留min_tokens_to_keep个tokens。这是为了避免在极端情况下输出变得过于限制。
     Args:
         logits: logits distribution shape (batch size, vocabulary size)
         if top_k > 0: keep only top k tokens with highest probability (top-k filtering).
